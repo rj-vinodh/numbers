@@ -125,7 +125,7 @@
     <div class="controls">
         <div class="control-group">
             <label for="numberInput">Count:</label>
-            <input type="number" id="numberInput" value="20" min="1" max="100">
+            <input type="number" id="numberInput" value="20" min="1" max="1000">
         </div>
 
         <div class="control-group">
@@ -504,7 +504,7 @@
 
         function updateNumbers() {
             const input = document.getElementById('numberInput');
-            const newCount = Math.max(1, Math.min(100, parseInt(input.value) || 20));
+            const newCount = Math.max(1, Math.min(1000, parseInt(input.value) || 20));
             input.value = newCount;
 
             // read order selection
