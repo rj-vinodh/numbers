@@ -125,7 +125,7 @@
     <div class="controls">
         <div class="control-group">
             <label for="numberInput">Count:</label>
-            <input type="number" id="numberInput" value="20" min="1" max="1000">
+            <input type="number" id="numberInput" value="20" min="1">
         </div>
 
         <div class="control-group">
@@ -550,7 +550,8 @@
 
         function updateNumbers() {
             const input = document.getElementById('numberInput');
-            const newCount = Math.max(1, Math.min(1000, parseInt(input.value) || 20));
+            const raw = parseInt(input.value);
+            const newCount = Math.max(1, Number.isInteger(raw) ? raw : 20);
             input.value = newCount;
 
             // read order selection
@@ -647,7 +648,8 @@
                 const step = e.shiftKey ? 10 : 1; // hold Shift to change faster
                 const dir = e.deltaY < 0 ? 1 : -1; // wheel up -> increase
                 const min = parseInt(numberInputEl.getAttribute('min')) || 1;
-                const max = parseInt(numberInputEl.getAttribute('max')) || 1000;
+                const maxAttr = numberInputEl.getAttribute('max');
+                const max = (maxAttr !== null) ? parseInt(maxAttr) : Infinity;
                 let val = parseInt(numberInputEl.value) || 0;
                 val = val + dir * step;
                 val = Math.max(min, Math.min(max, val));
