@@ -738,7 +738,11 @@
         }
 
         // Mouse wheel zoom (adjust camera z)
+        // Ignore wheel events that originate from the controls area (so scrolling inputs doesn't zoom)
         window.addEventListener('wheel', (ev) => {
+            // If the wheel event originated from inside the controls UI (inputs), don't zoom
+            if (ev.target && ev.target.closest && ev.target.closest('.controls')) return;
+
             // Prevent page scroll when interacting with canvas
             ev.preventDefault();
             const delta = ev.deltaY;
