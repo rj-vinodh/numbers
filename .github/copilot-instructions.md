@@ -1,50 +1,74 @@
 # project purpose
+
 - to teach kids numbers
-- use three js
+- use three.js
 
-## Quick guide for AI coding agents
+## quick guide for AI coding agents
 
-This repository is a small static project. The goal of this file is to give focused, actionable guidance so an AI agent (Copilot, assistant) can be productive immediately.
+This repository is a small, static site. The goal of this file is to give focused, actionable guidance so an AI agent (Copilot, assistant) can be productive immediately.
 
-Key points you should know:
+key points you should know
 
-- Project layout (minimal)
-  - `docs/index.html` — primary site entry (HTML). Most content changes live here or additional files under `docs/`.
-  - `readme.md` — top-level README describing the project (use lowercase filename as present).
+- project layout (minimal)
+  - `docs/index.html` — primary site entry (HTML). Most interactive behavior and UI live in this single file.
+  - `readme.md` — top-level README describing the project.
   - `LICENSE` — repository license file.
 
-- Big picture & why
-  - This repository contains a static documentation/site stored in `docs/`. There is no build system or package manifest present. Changes to pages are plain HTML edits and new files added under `docs/`.
+- big picture & why
+  - The project is a self-contained static page (no build system). Edits are plain HTML/JS/CSS changes under `docs/`.
+  - Rendering is done with Three.js (r128 via CDN) in `docs/index.html`.
 
-- Common developer workflows (how to preview, test, and commit)
+- common developer workflows (preview, test, commit)
   - Preview local changes: open `docs/index.html` in a browser. On macOS: `open docs/index.html`.
-  - There are no tests or build steps. Keep edits minimal, update relative links when adding files in `docs/`.
-  - Commit messages: use short imperative messages (e.g., `docs: add FAQ page` or `fix: correct meta tags`).
+  - There are no automated tests or build steps. Keep edits minimal and self-contained.
+  - Commit messages: use short imperative messages (e.g., `docs: add feature`, `fix: update grid labels`).
 
-- Project-specific conventions and patterns
-  - Filenames are lowercase (e.g., `readme.md`, `docs/index.html`). Preserve casing to avoid platform-specific link breakage.
-  - Prefer lightweight HTML edits — no framework scaffolding is used. Avoid introducing build tools unless requested.
-  - Keep the site content self-contained under `docs/`. Use relative links (`./page.html` or `subdir/page.html`).
+- project-specific conventions and patterns
+  - Filenames are lowercase (e.g., `readme.md`, `docs/index.html`). Preserve casing.
+  - Avoid adding build tooling, package manifests, or CI without explicit human approval.
+  - Keep site content self-contained under `docs/` and use relative links.
 
-- Integration points & external dependencies
-  - No external build, CI, or package manager files were found. Assume no Node/Python/Rust toolchain unless such files are added by humans.
+## runtime & architecture notes (important for edits)
 
-- When creating or modifying files, be explicit and conservative:
-  - If adding a new page, create `docs/new-page.html` and add a link from `docs/index.html`.
-  - If changing site metadata (title, meta description), update `docs/index.html` directly.
-  - Example: to add a “Contributing” page:
-    1. Create `docs/contributing.html` with content.
-    2. Add a link to `docs/index.html` (use a relative link).
+- the interactive page uses Three.js to create:
+  - a group of "balls" (one mesh per item by default),
+  - optional canvas-based textures for per-ball numeric labels,
+  - grid lines and row/column labels built from Plane geometries with Canvas textures.
 
-- Safety and style rules for the agent
-  - Do not add new tooling or CI without confirming with the human maintainer.
-  - Keep changes limited to documentation and HTML unless user explicitly asks to add code or tooling.
+- performance considerations
+  - Creating a CanvasTexture per ball and many individual Mesh objects is expensive. For large counts prefer one of:
+    1. InstancedMesh for the balls (single geometry/material instance) + a texture atlas for labels.
+    2. CSS/DOM overlay labels if exact 3D alignment isn't required.
+  - When updating or removing textures and geometries, always call dispose() on geometries, materials, and textures to free GPU memory.
 
-- Files to check when you make changes (priority order)
-  1. `docs/index.html` — update links, titles, or page content.
-  2. `readme.md` — update high-level documentation about the project and any new workflows.
-  3. `LICENSE` — do not modify unless instructed.
+- current fast-mode behavior (as of recent changes)
+  - The UI provides a "Balls only (fast)" toggle which is enabled by default.
+  - Fast mode defaults ON and does the following:
+    - hides grid lines and row/column labels,
+    - disables per-ball Canvas textures,
+    - renders balls as simple 2D discs (CircleGeometry) with MeshBasicMaterial (no lights/textures) to reduce load.
+  - Toggling fast-mode converts existing balls between fast (2D, no textures) and normal (3D sphere + labels) rendering. The helper `setBallRenderingMode` handles disposal and recreation.
+
+## guidance for making edits (checklist for PRs or patches)
+
+1. If you change rendering code that creates geometries or textures, ensure you:
+   - dispose() old geometries, materials, and textures when they are removed or replaced,
+   - avoid creating thousands of canvas textures unless you also add an instancing/atlas strategy.
+
+2. When adding new UI controls in `docs/index.html`:
+   - add a control inside the existing `.controls` container and preserve mobile layout behavior.
+   - keep controls accessible (labels with `for` attributes) and preserve existing `id` conventions.
+
+3. Performance-first edits:
+   - If the change might cause many new meshes/textures, either implement an efficient instanced approach or gate the feature behind the fast-mode toggle.
+
+4. Small features and behavior tweaks are welcome directly in `docs/index.html`. For larger changes (new build tooling or many new files), ask the maintainer first.
+
+## files to check when you make changes (priority order)
+1. `docs/index.html` — primary interactive logic and UI.
+2. `readme.md` — update high-level docs or usage notes if behavior changes.
+3. `LICENSE` — do not modify unless explicitly instructed.
 
 If anything in this file is unclear or you want additional conventions (commit hooks, branch naming, CI), tell me what to document and I will update this file.
 
-— End of instructions
+-- end of instructions

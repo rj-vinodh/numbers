@@ -158,6 +158,11 @@
             <input type="checkbox" id="autoRotate" title="Toggle auto rotation of the grid">
         </div>
 
+        <div class="control-group">
+            <label for="ballsOnly">Balls only (fast):</label>
+            <input type="checkbox" id="ballsOnly" title="Hide grid and numbers to improve performance when creating many balls" checked>
+        </div>
+
         <button class="btn" onclick="updateNumbers()">Update Grid</button>
         <div class="info">💡 Change the count and click Update to animate the removal/addition of balls</div>
     </div>
@@ -223,6 +228,9 @@
     // Font sizes
     let currentGridFontSize = 64; // used for grid labels
     let currentBallFontSize = 280; // used for numbers painted on balls
+    // Lightweight mode flags (fast mode defaults ON)
+    let currentShowGrid = false;
+    let currentShowNumbers = false;
 
         // Returns an ordered list of positions for `count` items according to `order`.
         // Optional `cols` argument overrides the number of columns (0 = auto).
@@ -298,51 +306,90 @@
         }
 
         function createBall(position, index) {
-            const geometry = new THREE.SphereGeometry(ballRadius, 32, 32);
-            const color = colors[index % colors.length];
-            const material = new THREE.MeshStandardMaterial({
-                color: color,
-                roughness: 0.4,
-                metalness: 0.3
-            });
-
-            const mesh = new THREE.Mesh(geometry, material);
+            // create an empty mesh and initialize rendering based on fast-mode
+            const mesh = new THREE.Mesh();
             mesh.position.set(position.x, position.y, 0);
-            mesh.userData = { number: index + 1 };
+            mesh.userData = { number: index + 1, _colorIndex: index % colors.length };
 
-            // Create text label as a simple mesh
+            // Set geometry/material according to fast-mode state
+            setBallRenderingMode(mesh, index, !currentShowNumbers);
+
+            gridGroup.add(mesh);
+            return mesh;
+        }
+
+        // Switch a ball between fast (2D, no textures) and normal (3D sphere + material) rendering
+        function setBallRenderingMode(ball, index, fast) {
+            // Dispose previous geometry/material if present
+            if (ball.geometry) {
+                try { ball.geometry.dispose(); } catch (e) {}
+            }
+            if (ball.material) {
+                try { ball.material.dispose(); } catch (e) {}
+            }
+            // Also remove any label children if switching to fast
+            if (fast) {
+                // 2D: use a CircleGeometry with a simple MeshBasicMaterial (no lights, no textures)
+                const geo = new THREE.CircleGeometry(ballRadius, 16);
+                const color = colors[index % colors.length];
+                const mat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
+                ball.geometry = geo;
+                ball.material = mat;
+                // Remove labels if present
+                removeBallLabel(ball);
+                // Ensure orientation faces camera (Circle in XY plane facing +Z is fine)
+                ball.rotation.set(0, 0, 0);
+            } else {
+                // 3D: sphere with standard material
+                const geo = new THREE.SphereGeometry(ballRadius, 32, 32);
+                const color = colors[index % colors.length];
+                const mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.4, metalness: 0.3 });
+                ball.geometry = geo;
+                ball.material = mat;
+                // Add label if numbers are enabled
+                if (currentShowNumbers) {
+                    createBallLabel(ball);
+                }
+            }
+        }
+
+        // Create a label mesh for an existing ball (uses ball.userData.number)
+        function createBallLabel(ball) {
+            // avoid creating duplicate labels
+            const existing = ball.children.find(c => c.material && c.material.map);
+            if (existing) return existing;
+
+            const size = 512;
             const canvas = document.createElement('canvas');
-            canvas.width = 512;
-            canvas.height = 512;
+            canvas.width = size;
+            canvas.height = size;
             const ctx = canvas.getContext('2d');
-            
-            // Transparent background
-            ctx.clearRect(0, 0, 512, 512);
-            
-            // Draw the number with better antialiasing
+            ctx.clearRect(0, 0, size, size);
             ctx.fillStyle = '#000000';
             ctx.font = `bold ${currentBallFontSize}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(index + 1, 256, 256);
+            ctx.fillText(ball.userData.number, size / 2, size / 2);
 
-            const texture = new THREE.CanvasTexture(canvas);
-            texture.minFilter = THREE.LinearFilter;
-            texture.magFilter = THREE.LinearFilter;
-            
-            // Create a plane geometry for the text label
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+
             const labelGeometry = new THREE.PlaneGeometry(2.2, 2.2);
-            const labelMaterial = new THREE.MeshBasicMaterial({ 
-                map: texture,
-                transparent: true,
-                side: THREE.DoubleSide
-            });
+            const labelMaterial = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
             const labelMesh = new THREE.Mesh(labelGeometry, labelMaterial);
             labelMesh.position.z = ballRadius + 0.1;
-            mesh.add(labelMesh);
+            ball.add(labelMesh);
+            return labelMesh;
+        }
 
-            gridGroup.add(mesh);
-            return mesh;
+        function removeBallLabel(ball) {
+            const labelMesh = ball.children.find(c => c.material && c.material.map);
+            if (!labelMesh) return;
+            if (labelMesh.material.map) labelMesh.material.map.dispose();
+            if (labelMesh.material) labelMesh.material.dispose();
+            if (labelMesh.geometry) labelMesh.geometry.dispose();
+            ball.remove(labelMesh);
         }
 
         // Create or update grid lines and numeric labels for rows/columns
@@ -365,6 +412,9 @@
                     });
                 }
             });
+
+            // If grid display is disabled (lightweight mode), don't recreate visuals
+            if (!currentShowGrid) return;
 
             const gridCols = colsOverride > 0 ? colsOverride : Math.ceil(Math.sqrt(count));
             const gridRows = Math.ceil(count / gridCols);
@@ -455,10 +505,23 @@
 
         // Update label texture on a single ball to match currentBallFontSize
         function updateBallLabel(ball, newFontSize) {
-            // ball.children[0] is the label mesh added in createBall
+            // find existing label mesh
             const labelMesh = ball.children.find(c => c.material && c.material.map);
-            if (!labelMesh) return;
-            // dispose old texture
+            // If no label exists but numbers are enabled, create one
+            if (!labelMesh) {
+                if (currentShowNumbers) {
+                    createBallLabel(ball);
+                }
+                return;
+            }
+
+            // If numbers are disabled, remove the label
+            if (!currentShowNumbers) {
+                removeBallLabel(ball);
+                return;
+            }
+
+            // dispose old texture and replace with new sized texture
             const oldMap = labelMesh.material.map;
             if (oldMap) oldMap.dispose();
 
@@ -483,7 +546,13 @@
 
         // Update labels for all existing balls
         function updateAllBallLabels(newFontSize) {
-            balls.forEach(b => updateBallLabel(b, newFontSize));
+            if (currentShowNumbers) {
+                // ensure each ball has a label and update it
+                balls.forEach(b => updateBallLabel(b, newFontSize));
+            } else {
+                // remove any existing labels to free textures
+                balls.forEach(b => removeBallLabel(b));
+            }
         }
 
         function animateBallIn(ball, delay) {
@@ -736,6 +805,33 @@
         if (autoRotateCheckbox) {
             autoRotateCheckbox.addEventListener('change', (e) => {
                 currentAutoRotate = !!e.target.checked;
+            });
+        }
+
+        // Apply the 'balls only' lightweight mode: hide grid and hide numbers
+        function applyBallsOnlyMode(enabled) {
+            if (enabled) {
+                currentShowGrid = false;
+                currentShowNumbers = false;
+            } else {
+                currentShowGrid = true;
+                currentShowNumbers = true;
+            }
+
+            // Update visuals accordingly
+            updateGridVisuals(balls.length, currentCols);
+            updateAllBallLabels(currentBallFontSize);
+
+            // Update existing balls to match the rendering mode (2D fast vs 3D normal)
+            balls.forEach((ball, idx) => {
+                setBallRenderingMode(ball, idx, !currentShowNumbers);
+            });
+        }
+
+        const ballsOnlyCheckbox = document.getElementById('ballsOnly');
+        if (ballsOnlyCheckbox) {
+            ballsOnlyCheckbox.addEventListener('change', (e) => {
+                applyBallsOnlyMode(!!e.target.checked);
             });
         }
 
