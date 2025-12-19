@@ -35,6 +35,13 @@
             height: calc(100% - 120px);
         }
 
+        /* container used by the p5 sketch (replaces the canvas element) */
+        #sketchContainer {
+            display: block;
+            width: 100%;
+            height: calc(100% - 120px);
+        }
+
         .controls {
             position: fixed;
             bottom: 0;
@@ -120,7 +127,7 @@
     </style>
 </head>
 <body>
-    <canvas id="canvas"></canvas>
+    <div id="sketchContainer"></div>
     
     <div class="controls">
         <div class="control-group">
@@ -167,103 +174,57 @@
         <div class="info">💡 Change the count and click Update to animate the removal/addition of balls</div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.5.0/p5.min.js"></script>
     <script>
-        // Scene setup
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xf9fafb);
-
-        const canvas = document.getElementById('canvas');
-        const camera = new THREE.PerspectiveCamera(
-            75,
-            canvas.clientWidth / canvas.clientHeight,
-            0.1,
-            1000
-        );
-        camera.position.z = 25;
-
-        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
-
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-        scene.add(ambientLight);
-
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(10, 15, 10);
-        scene.add(directionalLight);
-
-        // Grid container
-        const gridGroup = new THREE.Group();
-        scene.add(gridGroup);
-    // Grid lines and labels container
-    const gridLinesGroup = new THREE.Group();
-    scene.add(gridLinesGroup);
-
-        // Ball configuration
-        const ballRadius = 0.8;
-        const spacing = 2.5;
+        // ----- p5.js 2D implementation replacing Three.js -----
+        const spacing = 70; // pixel spacing between items
+        const ballRadius = 28; // visual radius in pixels for discs
         const colors = [
-            0xff6b6b, // Red
-            0x4ecdc4, // Teal
-            0xffe66d, // Yellow
-            0x95e1d3, // Mint
-            0xf38181, // Pink
-            0xaa96da, // Purple
-            0xfcbad3, // Light pink
-            0xa8edea, // Cyan
-            0xfed766, // Gold
-            0xff006e  // Magenta
+            '#ff6b6b', '#4ecdc4', '#ffe66d', '#95e1d3', '#f38181', '#aa96da', '#fcbad3', '#a8edea', '#fed766', '#ff006e'
         ];
 
         let balls = [];
         let animatingBalls = new Set();
-    // Current grouping order (row, column, spiral, random)
-    let currentOrder = 'row';
-    // Column override (0 = auto compute)
-    let currentCols = 0;
-    // Auto-rotate flag
-    let currentAutoRotate = false;
-    // Font sizes
-    let currentGridFontSize = 64; // used for grid labels
-    let currentBallFontSize = 280; // used for numbers painted on balls
-    // Lightweight mode flags (fast mode defaults ON)
-    let currentShowGrid = false;
-    let currentShowNumbers = false;
+        let currentOrder = 'row';
+        let currentCols = 0;
+        let currentAutoRotate = false; // not used in 2D but kept for compatibility
+        let currentGridFontSize = 24; // px
+        let currentBallFontSize = 18; // px
+        let currentShowGrid = false; // fast mode default
+        let currentShowNumbers = false; // fast mode default
 
-        // Returns an ordered list of positions for `count` items according to `order`.
-        // Optional `cols` argument overrides the number of columns (0 = auto).
+        // Grid layout state for drawing
+        let gridCols = 0, gridRows = 0, gridWidth = 0, gridHeight = 0;
+
+        // viewport / p5 canvas
+        let sketchWidth = 800, sketchHeight = 600;
+        let globalScale = 1; // used for wheel zoom
+
         function getGridLayout(count, order = 'row', cols = 0) {
-            const gridCols = cols > 0 ? cols : Math.ceil(Math.sqrt(count));
-            const gridRows = Math.ceil(count / gridCols);
-            const width = (gridCols - 1) * spacing;
-            const height = (gridRows - 1) * spacing;
+            const gridC = cols > 0 ? cols : Math.ceil(Math.sqrt(count));
+            const gridR = Math.ceil(count / gridC);
+            gridCols = gridC; gridRows = gridR;
+            gridWidth = (gridC - 1) * spacing;
+            gridHeight = (gridR - 1) * spacing;
 
-            // Create base positions for the full grid (gridRows x gridCols)
-            const total = gridRows * gridCols;
+            const total = gridR * gridC;
             const basePositions = [];
-            for (let r = 0; r < gridRows; r++) {
-                for (let c = 0; c < gridCols; c++) {
-                    const x = c * spacing - width / 2;
-                    const y = r * spacing - height / 2;
-                    basePositions.push({ x, y, i: r * gridCols + c });
+            for (let r = 0; r < gridR; r++) {
+                for (let c = 0; c < gridC; c++) {
+                    const x = c * spacing - gridWidth / 2;
+                    const y = r * spacing - gridHeight / 2;
+                    basePositions.push({ x, y, i: r * gridC + c });
                 }
             }
 
-            // Build an indices array in the requested order, then take the first `count` entries
             let indices = [];
             if (order === 'row') {
                 indices = Array.from({ length: total }, (_, i) => i).slice(0, count);
             } else if (order === 'column') {
-                for (let c = 0; c < gridCols; c++) {
-                    for (let r = 0; r < gridRows; r++) {
-                        indices.push(r * gridCols + c);
-                    }
-                }
+                for (let c = 0; c < gridC; c++) for (let r = 0; r < gridR; r++) indices.push(r * gridC + c);
                 indices = indices.slice(0, count);
             } else if (order === 'spiral') {
-                indices = getSpiralIndices(gridRows, gridCols).slice(0, count);
+                indices = getSpiralIndices(gridR, gridC).slice(0, count);
             } else if (order === 'random') {
                 indices = Array.from({ length: total }, (_, i) => i);
                 shuffleArray(indices);
@@ -275,8 +236,6 @@
             return indices.map(idx => ({ x: basePositions[idx].x, y: basePositions[idx].y, i: idx }));
         }
 
-        // Spiral ordering helper: returns array of indices for a gridSize x gridSize grid
-        // Spiral ordering helper for rectangular grid: rows x cols
         function getSpiralIndices(rows, cols) {
             const result = [];
             let top = 0, bottom = rows - 1, left = 0, right = cols - 1;
@@ -285,335 +244,27 @@
                 top++;
                 for (let r = top; r <= bottom; r++) result.push(r * cols + right);
                 right--;
-                if (top <= bottom) {
-                    for (let c = right; c >= left; c--) result.push(bottom * cols + c);
-                    bottom--;
-                }
-                if (left <= right) {
-                    for (let r = bottom; r >= top; r--) result.push(r * cols + left);
-                    left++;
-                }
+                if (top <= bottom) { for (let c = right; c >= left; c--) result.push(bottom * cols + c); bottom--; }
+                if (left <= right) { for (let r = bottom; r >= top; r--) result.push(r * cols + left); left++; }
             }
             return result;
         }
 
-        // Fisher-Yates shuffle
-        function shuffleArray(arr) {
-            for (let i = arr.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [arr[i], arr[j]] = [arr[j], arr[i]];
-            }
-        }
-
-        function createBall(position, index) {
-            // create an empty mesh and initialize rendering based on fast-mode
-            const mesh = new THREE.Mesh();
-            mesh.position.set(position.x, position.y, 0);
-            mesh.userData = { number: index + 1, _colorIndex: index % colors.length };
-
-            // Set geometry/material according to fast-mode state
-            setBallRenderingMode(mesh, index, !currentShowNumbers);
-
-            gridGroup.add(mesh);
-            return mesh;
-        }
-
-        // Switch a ball between fast (2D, no textures) and normal (3D sphere + material) rendering
-        function setBallRenderingMode(ball, index, fast) {
-            // Dispose previous geometry/material if present
-            if (ball.geometry) {
-                try { ball.geometry.dispose(); } catch (e) {}
-            }
-            if (ball.material) {
-                try { ball.material.dispose(); } catch (e) {}
-            }
-            // Also remove any label children if switching to fast
-            if (fast) {
-                // 2D: use a CircleGeometry with a simple MeshBasicMaterial (no lights, no textures)
-                const geo = new THREE.CircleGeometry(ballRadius, 16);
-                const color = colors[index % colors.length];
-                const mat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
-                ball.geometry = geo;
-                ball.material = mat;
-                // Remove labels if present
-                removeBallLabel(ball);
-                // Ensure orientation faces camera (Circle in XY plane facing +Z is fine)
-                ball.rotation.set(0, 0, 0);
-            } else {
-                // 3D: sphere with standard material
-                const geo = new THREE.SphereGeometry(ballRadius, 32, 32);
-                const color = colors[index % colors.length];
-                const mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.4, metalness: 0.3 });
-                ball.geometry = geo;
-                ball.material = mat;
-                // Add label if numbers are enabled
-                if (currentShowNumbers) {
-                    createBallLabel(ball);
-                }
-            }
-        }
-
-        // Create a label mesh for an existing ball (uses ball.userData.number)
-        function createBallLabel(ball) {
-            // avoid creating duplicate labels
-            const existing = ball.children.find(c => c.material && c.material.map);
-            if (existing) return existing;
-
-            const size = 512;
-            const canvas = document.createElement('canvas');
-            canvas.width = size;
-            canvas.height = size;
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, size, size);
-            ctx.fillStyle = '#000000';
-            ctx.font = `bold ${currentBallFontSize}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(ball.userData.number, size / 2, size / 2);
-
-            const tex = new THREE.CanvasTexture(canvas);
-            tex.minFilter = THREE.LinearFilter;
-            tex.magFilter = THREE.LinearFilter;
-
-            const labelGeometry = new THREE.PlaneGeometry(2.2, 2.2);
-            const labelMaterial = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
-            const labelMesh = new THREE.Mesh(labelGeometry, labelMaterial);
-            labelMesh.position.z = ballRadius + 0.1;
-            ball.add(labelMesh);
-            return labelMesh;
-        }
-
-        function removeBallLabel(ball) {
-            const labelMesh = ball.children.find(c => c.material && c.material.map);
-            if (!labelMesh) return;
-            if (labelMesh.material.map) labelMesh.material.map.dispose();
-            if (labelMesh.material) labelMesh.material.dispose();
-            if (labelMesh.geometry) labelMesh.geometry.dispose();
-            ball.remove(labelMesh);
-        }
-
-        // Create or update grid lines and numeric labels for rows/columns
-        function updateGridVisuals(count, colsOverride = 0) {
-            // Clear previous visuals
-            gridLinesGroup.children.slice().forEach(child => {
-                gridLinesGroup.remove(child);
-                // dispose geometries and materials if any
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    if (child.material.map) child.material.map.dispose();
-                    child.material.dispose();
-                }
-                // dispose textures on children
-                if (child.children) {
-                    child.children.forEach(c => {
-                        if (c.material && c.material.map) c.material.map.dispose();
-                        if (c.material) c.material.dispose();
-                        if (c.geometry) c.geometry.dispose();
-                    });
-                }
-            });
-
-            // If grid display is disabled (lightweight mode), don't recreate visuals
-            if (!currentShowGrid) return;
-
-            const gridCols = colsOverride > 0 ? colsOverride : Math.ceil(Math.sqrt(count));
-            const gridRows = Math.ceil(count / gridCols);
-            const width = (gridCols - 1) * spacing;
-            const height = (gridRows - 1) * spacing;
-
-            const lineMaterial = new THREE.LineBasicMaterial({ color: 0xd1d5db });
-
-            const vertices = [];
-            // vertical lines
-            for (let c = 0; c < gridCols; c++) {
-                const x = c * spacing - width / 2;
-                vertices.push(x, -height / 2, 0, x, height / 2, 0);
-            }
-            // horizontal lines
-            for (let r = 0; r < gridRows; r++) {
-                const y = r * spacing - height / 2;
-                vertices.push(-width / 2, y, 0, width / 2, y, 0);
-            }
-
-            const lineGeom = new THREE.BufferGeometry();
-            lineGeom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-            const lines = new THREE.LineSegments(lineGeom, lineMaterial);
-            gridLinesGroup.add(lines);
-
-            // Labels for columns (top)
-            for (let c = 0; c < gridCols; c++) {
-                const x = c * spacing - width / 2;
-                    const label = createTextLabel((c + 1).toString(), currentGridFontSize, '#374151');
-                label.position.set(x, height / 2 + spacing * 0.6, 0.1);
-                gridLinesGroup.add(label);
-            }
-
-            // Labels for rows (left)
-            for (let r = 0; r < gridRows; r++) {
-                const y = r * spacing - height / 2;
-                const label = createTextLabel((r + 1).toString(), currentGridFontSize, '#374151');
-                // rotate so text faces the camera similarly; using PlaneGeometry so no rotation needed
-                label.position.set(-width / 2 - spacing * 0.6, y, 0.1);
-                gridLinesGroup.add(label);
-            }
-        }
-
-        // helper: create a small 2D canvas text as a THREE.Mesh (Plane) for labels
-        function createTextLabel(text, fontSize = 64, color = '#000') {
-            const size = 256;
-            const canvas = document.createElement('canvas');
-            canvas.width = size;
-            canvas.height = size;
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, size, size);
-            ctx.fillStyle = color;
-            ctx.font = `bold ${fontSize}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(text, size / 2, size / 2);
-
-            const tex = new THREE.CanvasTexture(canvas);
-            tex.minFilter = THREE.LinearFilter;
-            tex.magFilter = THREE.LinearFilter;
-
-            const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
-            const geom = new THREE.PlaneGeometry((fontSize / 64) * 1.2, (fontSize / 64) * 1.2);
-            const mesh = new THREE.Mesh(geom, mat);
-            return mesh;
-        }
+        function shuffleArray(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } }
 
         function initializeBalls(count) {
-            // Clear existing balls
-            balls.forEach(ball => {
-                gridGroup.remove(ball);
-                disposeBall(ball);
-            });
             balls = [];
-
-            // Update grid visuals (lines & labels)
-            updateGridVisuals(count, currentCols);
-
-            // Create new balls
             const positions = getGridLayout(count, currentOrder, currentCols);
             positions.forEach((pos, idx) => {
-                const ball = createBall(pos, idx);
-                balls.push(ball);            // Initial scale animation
-            ball.scale.set(0, 0, 0);
-            animateBallIn(ball, 0.2 + idx * 0.01);
-            });
-        }
-
-        // Update label texture on a single ball to match currentBallFontSize
-        function updateBallLabel(ball, newFontSize) {
-            // find existing label mesh
-            const labelMesh = ball.children.find(c => c.material && c.material.map);
-            // If no label exists but numbers are enabled, create one
-            if (!labelMesh) {
-                if (currentShowNumbers) {
-                    createBallLabel(ball);
-                }
-                return;
-            }
-
-            // If numbers are disabled, remove the label
-            if (!currentShowNumbers) {
-                removeBallLabel(ball);
-                return;
-            }
-
-            // dispose old texture and replace with new sized texture
-            const oldMap = labelMesh.material.map;
-            if (oldMap) oldMap.dispose();
-
-            const size = 512;
-            const canvas = document.createElement('canvas');
-            canvas.width = size;
-            canvas.height = size;
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, size, size);
-            ctx.fillStyle = '#000000';
-            ctx.font = `bold ${newFontSize}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(ball.userData.number, size / 2, size / 2);
-
-            const tex = new THREE.CanvasTexture(canvas);
-            tex.minFilter = THREE.LinearFilter;
-            tex.magFilter = THREE.LinearFilter;
-            labelMesh.material.map = tex;
-            labelMesh.material.needsUpdate = true;
-        }
-
-        // Update labels for all existing balls
-        function updateAllBallLabels(newFontSize) {
-            if (currentShowNumbers) {
-                // ensure each ball has a label and update it
-                balls.forEach(b => updateBallLabel(b, newFontSize));
-            } else {
-                // remove any existing labels to free textures
-                balls.forEach(b => removeBallLabel(b));
-            }
-        }
-
-        function animateBallIn(ball, delay) {
-            animatingBalls.add(ball);
-            const startTime = performance.now();
-            const duration = 500;
-
-            function animate(currentTime) {
-                const elapsed = currentTime - startTime - delay * 1000;
-                const progress = Math.min(Math.max(elapsed / duration, 0), 1);
-                const easeProgress = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
-
-                ball.scale.set(easeProgress, easeProgress, easeProgress);
-
-                if (progress < 1) {
-                    requestAnimationFrame(animate);
-                } else {
-                    ball.scale.set(1, 1, 1);
-                    animatingBalls.delete(ball);
-                }
-            }
-            requestAnimationFrame(animate);
-        }
-
-        function animateBallOut(ball, callback) {
-            animatingBalls.add(ball);
-            const startTime = performance.now();
-            const duration = 400;
-
-            function animate(currentTime) {
-                const elapsed = currentTime - startTime;
-                const progress = Math.min(elapsed / duration, 1);
-
-                ball.scale.set(1 - progress, 1 - progress, 1 - progress);
-                ball.rotation.z += 0.05;
-
-                if (progress < 1) {
-                    requestAnimationFrame(animate);
-                } else {
-                    gridGroup.remove(ball);
-                    ball.geometry.dispose();
-                    ball.material.dispose();
-                    if (ball.children[0]) {
-                        ball.children[0].material.dispose();
-                    }            animatingBalls.delete(ball);
-            if (callback) callback();
-                }
-            }
-            requestAnimationFrame(animate);
-        }
-
-        function disposeBall(ball) {
-            ball.geometry.dispose();
-            ball.material.dispose();
-            // Dispose children materials
-            ball.children.forEach(child => {
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    if (child.material.map) child.material.map.dispose();
-                    child.material.dispose();
-                }
+                const b = {
+                    x: pos.x, y: pos.y,
+                    drawX: pos.x, drawY: pos.y,
+                    number: idx + 1,
+                    color: colors[idx % colors.length],
+                    scale: 0, targetScale: 1,
+                    removing: false
+                };
+                balls.push(b);
             });
         }
 
@@ -623,113 +274,121 @@
             const newCount = Math.max(1, Number.isInteger(raw) ? raw : 20);
             input.value = newCount;
 
-            // read order selection
             const order = document.getElementById('orderSelect') ? document.getElementById('orderSelect').value : 'row';
             currentOrder = order;
 
-            // Update grid visuals for the new count/order
             const colsInput = document.getElementById('colsInput');
             const colsVal = colsInput ? parseInt(colsInput.value) || 0 : 0;
             currentCols = colsVal;
-            updateGridVisuals(newCount, currentCols);
 
             const currentCount = balls.length;
-
             if (newCount > currentCount) {
-                // Add new balls
                 const positions = getGridLayout(newCount, order, currentCols);
                 for (let i = currentCount; i < newCount; i++) {
-                    const ball = createBall(positions[i], i);
-                    balls.push(ball);
-                    animateBallIn(ball, 0.1 + (i - currentCount) * 0.02);
+                    const pos = positions[i];
+                    const b = { x: pos.x, y: pos.y, drawX: pos.x, drawY: pos.y, number: i + 1, color: colors[i % colors.length], scale: 0, targetScale: 1, removing:false };
+                    balls.push(b);
                 }
             } else if (newCount < currentCount) {
-                // Remove balls with animation
-                const ballsToRemove = balls.splice(newCount);
-                ballsToRemove.forEach((ball, idx) => {
-                    animateBallOut(ball);
-                });
+                // mark extras for removal (quick shrink)
+                const toRemove = balls.splice(newCount);
+                // no heavy disposal needed in p5; they will disappear next frame
             } else {
-                // Reposition existing balls
+                // reposition existing
                 const newPositions = getGridLayout(newCount, order, currentCols);
-                balls.forEach((ball, idx) => {
-                    const targetPos = newPositions[idx];
-                    animateBallPosition(ball, targetPos);
+                balls.forEach((b, idx) => { if (newPositions[idx]) { b.x = newPositions[idx].x; b.y = newPositions[idx].y; } });
+            }
+        }
+
+        // p5 sketch
+        let sketchCanvas;
+        const sketch = (p) => {
+            p.setup = () => {
+                const container = document.getElementById('sketchContainer');
+                sketchWidth = container.clientWidth;
+                sketchHeight = container.clientHeight;
+                sketchCanvas = p.createCanvas(sketchWidth, sketchHeight);
+                sketchCanvas.parent('sketchContainer');
+                p.pixelDensity(window.devicePixelRatio || 1);
+                p.textAlign(p.CENTER, p.CENTER);
+                p.ellipseMode(p.CENTER);
+                initializeBalls(parseInt(document.getElementById('numberInput').value || 20));
+            };
+
+            p.windowResized = () => {
+                const container = document.getElementById('sketchContainer');
+                sketchWidth = container.clientWidth;
+                sketchHeight = container.clientHeight;
+                p.resizeCanvas(sketchWidth, sketchHeight);
+            };
+
+            p.draw = () => {
+                p.background(249,250,251);
+                p.push();
+                // translate to center and scale for zoom
+                p.translate(sketchWidth/2, sketchHeight/2);
+                p.scale(globalScale);
+
+                // draw grid if enabled
+                if (currentShowGrid) {
+                    p.stroke('#d1d5db');
+                    p.strokeWeight(1);
+                    // vertical lines
+                    for (let c = 0; c < gridCols; c++) {
+                        const x = c * spacing - gridWidth/2;
+                        p.line(x, -gridHeight/2, x, gridHeight/2);
+                    }
+                    // horizontal lines
+                    for (let r = 0; r < gridRows; r++) {
+                        const y = r * spacing - gridHeight/2;
+                        p.line(-gridWidth/2, y, gridWidth/2, y);
+                    }
+
+                    // labels
+                    p.fill('#374151');
+                    p.noStroke();
+                    p.textSize(currentGridFontSize);
+                    // columns
+                    for (let c = 0; c < gridCols; c++) {
+                        const x = c * spacing - gridWidth/2;
+                        p.text((c+1).toString(), x, -gridHeight/2 - spacing*0.6);
+                    }
+                    // rows
+                    for (let r = 0; r < gridRows; r++) {
+                        const y = r * spacing - gridHeight/2;
+                        p.text((r+1).toString(), -gridWidth/2 - spacing*0.6, y);
+                    }
+                }
+
+                // draw balls
+                balls.forEach((b, idx) => {
+                    // ease position
+                    b.drawX += (b.x - b.drawX) * 0.15;
+                    b.drawY += (b.y - b.drawY) * 0.15;
+                    // scale animation
+                    b.scale += (b.targetScale - b.scale) * 0.18;
+
+                    p.push();
+                    p.translate(b.drawX, b.drawY);
+                    p.noStroke();
+                    p.fill(b.color);
+                    p.ellipse(0, 0, ballRadius*2*b.scale, ballRadius*2*b.scale);
+                    if (currentShowNumbers) {
+                        p.fill(0);
+                        p.textSize(currentBallFontSize);
+                        p.text(b.number.toString(), 0, 0);
+                    }
+                    p.pop();
                 });
-            }
-        }
 
-        function animateBallPosition(ball, targetPos) {
-            const startPos = { x: ball.position.x, y: ball.position.y };
-            const startTime = performance.now();
-            const duration = 500;
+                p.pop();
+            };
+        };
+        new p5(sketch);
 
-            function animate(currentTime) {
-                const elapsed = currentTime - startTime;
-                const progress = Math.min(elapsed / duration, 1);
-                const easeProgress = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
+        // wire existing UI controls
+        document.getElementById('numberInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') updateNumbers(); });
 
-                ball.position.x = startPos.x + (targetPos.x - startPos.x) * easeProgress;
-                ball.position.y = startPos.y + (targetPos.y - startPos.y) * easeProgress;
-
-                if (progress < 1) {
-                    requestAnimationFrame(animate);
-                }
-            }
-            requestAnimationFrame(animate);
-        }
-
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            const width = canvas.clientWidth;
-            const height = canvas.clientHeight;
-            camera.aspect = width / height;
-            camera.updateProjectionMatrix();
-            renderer.setSize(width, height);
-        });
-
-        // Rotation animation
-        function animate() {
-            requestAnimationFrame(animate);
-            // rotate only if enabled
-            if (currentAutoRotate) {
-                gridGroup.rotation.z += 0.0005;
-            }
-
-            renderer.render(scene, camera);
-        }
-
-        // Initialize with default count
-        initializeBalls(20);
-        animate();
-
-        // Allow Enter key to update
-        document.getElementById('numberInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') updateNumbers();
-        });
-
-        // Allow mouse wheel to change the Count input when hovering over it
-        const numberInputEl = document.getElementById('numberInput');
-        if (numberInputEl) {
-            numberInputEl.addEventListener('wheel', (e) => {
-                // only handle when pointer is over the input
-                e.preventDefault();
-                const step = e.shiftKey ? 10 : 1; // hold Shift to change faster
-                const dir = e.deltaY < 0 ? 1 : -1; // wheel up -> increase
-                const min = parseInt(numberInputEl.getAttribute('min')) || 1;
-                const maxAttr = numberInputEl.getAttribute('max');
-                const max = (maxAttr !== null) ? parseInt(maxAttr) : Infinity;
-                let val = parseInt(numberInputEl.value) || 0;
-                val = val + dir * step;
-                val = Math.max(min, Math.min(max, val));
-                if (val !== parseInt(numberInputEl.value)) {
-                    numberInputEl.value = val;
-                    updateNumbers();
-                }
-            }, { passive: false });
-        }
-
-        // Helper to attach wheel increment to any number input
         function attachWheelToNumberInput(selector, onChangeCallback, opts = {}) {
             const el = document.getElementById(selector);
             if (!el) return;
@@ -751,103 +410,47 @@
             }, { passive: false });
         }
 
-        // Attach wheel handlers to other numeric inputs
         attachWheelToNumberInput('colsInput', () => updateNumbers(), { step: 1, bigStep: 5 });
         attachWheelToNumberInput('gridFontSize', () => {
             const el = document.getElementById('gridFontSize');
-            const v = parseInt(el.value) || 64;
+            const v = parseInt(el.value) || 24;
             currentGridFontSize = v;
-            updateGridVisuals(balls.length, currentCols);
         }, { step: 1, bigStep: 8 });
         attachWheelToNumberInput('ballFontSize', () => {
             const el = document.getElementById('ballFontSize');
-            const v = parseInt(el.value) || 280;
+            const v = parseInt(el.value) || 18;
             currentBallFontSize = v;
-            updateAllBallLabels(currentBallFontSize);
-        }, { step: 2, bigStep: 20 });
+        }, { step: 1, bigStep: 8 });
 
-        // Reposition when grouping order or columns change; wire auto-rotate toggle and wheel zoom
-        const orderSelect = document.getElementById('orderSelect');
-        if (orderSelect) {
-            orderSelect.addEventListener('change', () => {
-                updateNumbers();
-            });
-        }
+        // wire other controls
+        const orderSelect = document.getElementById('orderSelect'); if (orderSelect) orderSelect.addEventListener('change', () => updateNumbers());
+        const colsInput = document.getElementById('colsInput'); if (colsInput) colsInput.addEventListener('change', () => updateNumbers());
+        const gridFontInput = document.getElementById('gridFontSize'); if (gridFontInput) gridFontInput.addEventListener('change', (e) => { currentGridFontSize = parseInt(e.target.value) || 24; });
+        const ballFontInput = document.getElementById('ballFontSize'); if (ballFontInput) ballFontInput.addEventListener('change', (e) => { currentBallFontSize = parseInt(e.target.value) || 18; });
+        const autoRotateCheckbox = document.getElementById('autoRotate'); if (autoRotateCheckbox) autoRotateCheckbox.addEventListener('change', (e) => { currentAutoRotate = !!e.target.checked; });
 
-        const colsInput = document.getElementById('colsInput');
-        if (colsInput) {
-            colsInput.addEventListener('change', () => {
-                updateNumbers();
-            });
-        }
-
-        const gridFontInput = document.getElementById('gridFontSize');
-        if (gridFontInput) {
-            gridFontInput.addEventListener('change', (e) => {
-                const v = parseInt(e.target.value) || 64;
-                currentGridFontSize = v;
-                // refresh grid visuals only
-                updateGridVisuals(balls.length, currentCols);
-            });
-        }
-
-        const ballFontInput = document.getElementById('ballFontSize');
-        if (ballFontInput) {
-            ballFontInput.addEventListener('change', (e) => {
-                const v = parseInt(e.target.value) || 280;
-                currentBallFontSize = v;
-                // update existing balls' labels
-                updateAllBallLabels(currentBallFontSize);
-            });
-        }
-
-        const autoRotateCheckbox = document.getElementById('autoRotate');
-        if (autoRotateCheckbox) {
-            autoRotateCheckbox.addEventListener('change', (e) => {
-                currentAutoRotate = !!e.target.checked;
-            });
-        }
-
-        // Apply the 'balls only' lightweight mode: hide grid and hide numbers
         function applyBallsOnlyMode(enabled) {
-            if (enabled) {
-                currentShowGrid = false;
-                currentShowNumbers = false;
-            } else {
-                currentShowGrid = true;
-                currentShowNumbers = true;
-            }
-
-            // Update visuals accordingly
-            updateGridVisuals(balls.length, currentCols);
-            updateAllBallLabels(currentBallFontSize);
-
-            // Update existing balls to match the rendering mode (2D fast vs 3D normal)
-            balls.forEach((ball, idx) => {
-                setBallRenderingMode(ball, idx, !currentShowNumbers);
-            });
+            if (enabled) { currentShowGrid = false; currentShowNumbers = false; }
+            else { currentShowGrid = true; currentShowNumbers = true; }
         }
+        const ballsOnlyCheckbox = document.getElementById('ballsOnly'); if (ballsOnlyCheckbox) ballsOnlyCheckbox.addEventListener('change', (e) => applyBallsOnlyMode(!!e.target.checked));
 
-        const ballsOnlyCheckbox = document.getElementById('ballsOnly');
-        if (ballsOnlyCheckbox) {
-            ballsOnlyCheckbox.addEventListener('change', (e) => {
-                applyBallsOnlyMode(!!e.target.checked);
-            });
-        }
-
-        // Mouse wheel zoom (adjust camera z)
-        // Ignore wheel events that originate from the controls area (so scrolling inputs doesn't zoom)
+        // mouse wheel zoom for canvas (adjust globalScale), ignore events from controls
         window.addEventListener('wheel', (ev) => {
-            // If the wheel event originated from inside the controls UI (inputs), don't zoom
             if (ev.target && ev.target.closest && ev.target.closest('.controls')) return;
-
-            // Prevent page scroll when interacting with canvas
             ev.preventDefault();
             const delta = ev.deltaY;
-            camera.position.z += delta * 0.02; // adjust sensitivity
-            camera.position.z = Math.max(8, Math.min(200, camera.position.z));
-            camera.updateProjectionMatrix();
+            globalScale += delta * -0.0015; // invert so wheel up zooms in
+            globalScale = Math.max(0.25, Math.min(4, globalScale));
         }, { passive: false });
+
+        // initialize defaults
+        (function initDefaults(){
+            // set numeric defaults mapping from previous HTML defaults
+            currentGridFontSize = parseInt(document.getElementById('gridFontSize').value) || 24;
+            currentBallFontSize = parseInt(document.getElementById('ballFontSize').value) || 18;
+            const ballsOnly = document.getElementById('ballsOnly'); if (ballsOnly) applyBallsOnlyMode(!!ballsOnly.checked);
+        })();
     </script>
 </body>
 </html>

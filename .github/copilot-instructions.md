@@ -1,7 +1,7 @@
 # project purpose
 
 - to teach kids numbers
-- use three.js
+- use p5 js
 
 ## quick guide for AI coding agents
 
