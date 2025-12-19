@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Math Counting</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #111; }
+        #ui { position: absolute; top: 20px; left: 20px; background: rgba(255, 255, 255, 0.9); padding: 20px; border-radius: 12px; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        input, select { padding: 8px; font-size: 1rem; border-radius: 5px; border: 1px solid #ccc; margin-bottom: 10px; width: 100px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; color: #333; }
+        h2 { margin: 0 0 10px 0; color: #2c3e50; font-size: 1.2rem; }
+        .hint { font-size: 0.8rem; color: #666; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <h2>3D Number Explorer</h2>
+    <label>How many balls?</label>
+    <input type="number" id="numInput" value="10" min="1" max="200">
+    
+    <label>Group by (Row Size):</label>
+    <select id="groupSelect">
+        <option value="1">1 (Single line)</option>
+        <option value="2">2 (Pairs)</option>
+        <option value="5" selected>5 (Nickel)</option>
+        <option value="10">10 (Decade)</option>
+    </select>
+    <div class="hint">Click and drag to rotate!<br>Scroll to zoom.</div>
+</div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // --- SETUP ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb); // Sky blue
+    
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(5, 5, 12);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    const ballsGroup = new THREE.Group();
+    scene.add(ballsGroup);
+
+    // --- LIGHTING ---
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1);
+    sunLight.position.set(5, 10, 7);
+    scene.add(sunLight);
+
+    // --- MATERIALS & GEOMETRY ---
+    const ballGeometry = new THREE.SphereGeometry(0.4, 32, 32);
+    const ballMaterial = new THREE.MeshPhongMaterial({ color: 0xff4444, shininess: 100 });
+
+    function updateBalls() {
+        // Clear previous balls
+        while(ballsGroup.children.length > 0){ 
+            ballsGroup.remove(ballsGroup.children[0]); 
+        }
+
+        const count = parseInt(document.getElementById('numInput').value) || 0;
+        const perRow = parseInt(document.getElementById('groupSelect').value);
+        
+        const spacing = 1.2;
+
+        for (let i = 0; i < count; i++) {
+            const ball = new THREE.Mesh(ballGeometry, ballMaterial);
+            
+            // Calculate grid position
+            const x = (i % perRow) * spacing;
+            const y = -Math.floor(i / perRow) * spacing;
+            
+            ball.position.set(x, y, 0);
+            ballsGroup.add(ball);
+        }
+
+        // Center the camera target on the group
+        const rows = Math.ceil(count / perRow);
+        const centerOffset = new THREE.Vector3(
+            ((perRow - 1) * spacing) / 2,
+            -((rows - 1) * spacing) / 2,
+            0
+        );
+        ballsGroup.position.set(-centerOffset.x, -centerOffset.y, 0);
+    }
+
+    // --- INTERACTIVITY ---
+    document.getElementById('numInput').addEventListener('input', updateBalls);
+    document.getElementById('groupSelect').addEventListener('change', updateBalls);
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // --- ANIMATION LOOP ---
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+
+    updateBalls();
+    animate();
+</script>
+</body>
+</html>
