@@ -658,6 +658,43 @@
             }, { passive: false });
         }
 
+        // Helper to attach wheel increment to any number input
+        function attachWheelToNumberInput(selector, onChangeCallback, opts = {}) {
+            const el = document.getElementById(selector);
+            if (!el) return;
+            el.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const baseStep = opts.step || 1;
+                const bigStep = opts.bigStep || (baseStep * 10);
+                const step = e.shiftKey ? bigStep : baseStep;
+                const dir = e.deltaY < 0 ? 1 : -1;
+                const min = parseInt(el.getAttribute('min')) || -Infinity;
+                const max = parseInt(el.getAttribute('max')) || Infinity;
+                let val = parseInt(el.value) || 0;
+                val = val + dir * step;
+                val = Math.max(min, Math.min(max, val));
+                if (val !== parseInt(el.value)) {
+                    el.value = val;
+                    try { onChangeCallback(el, val); } catch (err) { /* swallow */ }
+                }
+            }, { passive: false });
+        }
+
+        // Attach wheel handlers to other numeric inputs
+        attachWheelToNumberInput('colsInput', () => updateNumbers(), { step: 1, bigStep: 5 });
+        attachWheelToNumberInput('gridFontSize', () => {
+            const el = document.getElementById('gridFontSize');
+            const v = parseInt(el.value) || 64;
+            currentGridFontSize = v;
+            updateGridVisuals(balls.length, currentCols);
+        }, { step: 1, bigStep: 8 });
+        attachWheelToNumberInput('ballFontSize', () => {
+            const el = document.getElementById('ballFontSize');
+            const v = parseInt(el.value) || 280;
+            currentBallFontSize = v;
+            updateAllBallLabels(currentBallFontSize);
+        }, { step: 2, bigStep: 20 });
+
         // Reposition when grouping order or columns change; wire auto-rotate toggle and wheel zoom
         const orderSelect = document.getElementById('orderSelect');
         if (orderSelect) {
