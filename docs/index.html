@@ -138,6 +138,16 @@
             </select>
         </div>
 
+        <div class="control-group">
+            <label for="colsInput">Columns (0 = auto):</label>
+            <input type="number" id="colsInput" value="0" min="0" max="100">
+        </div>
+
+        <div class="control-group">
+            <label for="autoRotate">Auto-rotate:</label>
+            <input type="checkbox" id="autoRotate" title="Toggle auto rotation of the grid">
+        </div>
+
         <button class="btn" onclick="updateNumbers()">Update Grid</button>
         <div class="info">💡 Change the count and click Update to animate the removal/addition of balls</div>
     </div>
@@ -172,6 +182,9 @@
         // Grid container
         const gridGroup = new THREE.Group();
         scene.add(gridGroup);
+    // Grid lines and labels container
+    const gridLinesGroup = new THREE.Group();
+    scene.add(gridLinesGroup);
 
         // Ball configuration
         const ballRadius = 0.8;
@@ -193,22 +206,28 @@
         let animatingBalls = new Set();
     // Current grouping order (row, column, spiral, random)
     let currentOrder = 'row';
+    // Column override (0 = auto compute)
+    let currentCols = 0;
+    // Auto-rotate flag
+    let currentAutoRotate = false;
 
-        // Returns an ordered list of positions for `count` items according to `order`
-        function getGridLayout(count, order = 'row') {
-            const gridSize = Math.ceil(Math.sqrt(count));
-            const width = (gridSize - 1) * spacing;
-            const height = (gridSize - 1) * spacing;
+        // Returns an ordered list of positions for `count` items according to `order`.
+        // Optional `cols` argument overrides the number of columns (0 = auto).
+        function getGridLayout(count, order = 'row', cols = 0) {
+            const gridCols = cols > 0 ? cols : Math.ceil(Math.sqrt(count));
+            const gridRows = Math.ceil(count / gridCols);
+            const width = (gridCols - 1) * spacing;
+            const height = (gridRows - 1) * spacing;
 
-            // Create base positions for the full grid (gridSize * gridSize)
-            const total = gridSize * gridSize;
+            // Create base positions for the full grid (gridRows x gridCols)
+            const total = gridRows * gridCols;
             const basePositions = [];
-            for (let i = 0; i < total; i++) {
-                const row = Math.floor(i / gridSize);
-                const col = i % gridSize;
-                const x = col * spacing - width / 2;
-                const y = row * spacing - height / 2;
-                basePositions.push({ x, y, i });
+            for (let r = 0; r < gridRows; r++) {
+                for (let c = 0; c < gridCols; c++) {
+                    const x = c * spacing - width / 2;
+                    const y = r * spacing - height / 2;
+                    basePositions.push({ x, y, i: r * gridCols + c });
+                }
             }
 
             // Build an indices array in the requested order, then take the first `count` entries
@@ -216,14 +235,14 @@
             if (order === 'row') {
                 indices = Array.from({ length: total }, (_, i) => i).slice(0, count);
             } else if (order === 'column') {
-                for (let c = 0; c < gridSize; c++) {
-                    for (let r = 0; r < gridSize; r++) {
-                        indices.push(r * gridSize + c);
+                for (let c = 0; c < gridCols; c++) {
+                    for (let r = 0; r < gridRows; r++) {
+                        indices.push(r * gridCols + c);
                     }
                 }
                 indices = indices.slice(0, count);
             } else if (order === 'spiral') {
-                indices = getSpiralIndices(gridSize).slice(0, count);
+                indices = getSpiralIndices(gridRows, gridCols).slice(0, count);
             } else if (order === 'random') {
                 indices = Array.from({ length: total }, (_, i) => i);
                 shuffleArray(indices);
@@ -232,24 +251,25 @@
                 indices = Array.from({ length: total }, (_, i) => i).slice(0, count);
             }
 
-            return indices.map(i => ({ x: basePositions[i].x, y: basePositions[i].y, i }));
+            return indices.map(idx => ({ x: basePositions[idx].x, y: basePositions[idx].y, i: idx }));
         }
 
         // Spiral ordering helper: returns array of indices for a gridSize x gridSize grid
-        function getSpiralIndices(gridSize) {
+        // Spiral ordering helper for rectangular grid: rows x cols
+        function getSpiralIndices(rows, cols) {
             const result = [];
-            let top = 0, bottom = gridSize - 1, left = 0, right = gridSize - 1;
+            let top = 0, bottom = rows - 1, left = 0, right = cols - 1;
             while (top <= bottom && left <= right) {
-                for (let c = left; c <= right; c++) result.push(top * gridSize + c);
+                for (let c = left; c <= right; c++) result.push(top * cols + c);
                 top++;
-                for (let r = top; r <= bottom; r++) result.push(r * gridSize + right);
+                for (let r = top; r <= bottom; r++) result.push(r * cols + right);
                 right--;
                 if (top <= bottom) {
-                    for (let c = right; c >= left; c--) result.push(bottom * gridSize + c);
+                    for (let c = right; c >= left; c--) result.push(bottom * cols + c);
                     bottom--;
                 }
                 if (left <= right) {
-                    for (let r = bottom; r >= top; r--) result.push(r * gridSize + left);
+                    for (let r = bottom; r >= top; r--) result.push(r * cols + left);
                     left++;
                 }
             }
@@ -312,6 +332,93 @@
             return mesh;
         }
 
+        // Create or update grid lines and numeric labels for rows/columns
+        function updateGridVisuals(count, colsOverride = 0) {
+            // Clear previous visuals
+            gridLinesGroup.children.slice().forEach(child => {
+                gridLinesGroup.remove(child);
+                // dispose geometries and materials if any
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (child.material.map) child.material.map.dispose();
+                    child.material.dispose();
+                }
+                // dispose textures on children
+                if (child.children) {
+                    child.children.forEach(c => {
+                        if (c.material && c.material.map) c.material.map.dispose();
+                        if (c.material) c.material.dispose();
+                        if (c.geometry) c.geometry.dispose();
+                    });
+                }
+            });
+
+            const gridCols = colsOverride > 0 ? colsOverride : Math.ceil(Math.sqrt(count));
+            const gridRows = Math.ceil(count / gridCols);
+            const width = (gridCols - 1) * spacing;
+            const height = (gridRows - 1) * spacing;
+
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0xd1d5db });
+
+            const vertices = [];
+            // vertical lines
+            for (let c = 0; c < gridCols; c++) {
+                const x = c * spacing - width / 2;
+                vertices.push(x, -height / 2, 0, x, height / 2, 0);
+            }
+            // horizontal lines
+            for (let r = 0; r < gridRows; r++) {
+                const y = r * spacing - height / 2;
+                vertices.push(-width / 2, y, 0, width / 2, y, 0);
+            }
+
+            const lineGeom = new THREE.BufferGeometry();
+            lineGeom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            const lines = new THREE.LineSegments(lineGeom, lineMaterial);
+            gridLinesGroup.add(lines);
+
+            // Labels for columns (top)
+            for (let c = 0; c < gridCols; c++) {
+                const x = c * spacing - width / 2;
+                const label = createTextLabel((c + 1).toString(), 64, '#374151');
+                label.position.set(x, height / 2 + spacing * 0.6, 0.1);
+                gridLinesGroup.add(label);
+            }
+
+            // Labels for rows (left)
+            for (let r = 0; r < gridRows; r++) {
+                const y = r * spacing - height / 2;
+                const label = createTextLabel((r + 1).toString(), 64, '#374151');
+                // rotate so text faces the camera similarly; using PlaneGeometry so no rotation needed
+                label.position.set(-width / 2 - spacing * 0.6, y, 0.1);
+                gridLinesGroup.add(label);
+            }
+        }
+
+        // helper: create a small 2D canvas text as a THREE.Mesh (Plane) for labels
+        function createTextLabel(text, fontSize = 64, color = '#000') {
+            const size = 256;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, size, size);
+            ctx.fillStyle = color;
+            ctx.font = `bold ${fontSize}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, size / 2, size / 2);
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+
+            const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
+            const geom = new THREE.PlaneGeometry((fontSize / 64) * 1.2, (fontSize / 64) * 1.2);
+            const mesh = new THREE.Mesh(geom, mat);
+            return mesh;
+        }
+
         function initializeBalls(count) {
             // Clear existing balls
             balls.forEach(ball => {
@@ -320,8 +427,11 @@
             });
             balls = [];
 
+            // Update grid visuals (lines & labels)
+            updateGridVisuals(count, currentCols);
+
             // Create new balls
-            const positions = getGridLayout(count, currentOrder);
+            const positions = getGridLayout(count, currentOrder, currentCols);
             positions.forEach((pos, idx) => {
                 const ball = createBall(pos, idx);
                 balls.push(ball);            // Initial scale animation
@@ -401,11 +511,17 @@
             const order = document.getElementById('orderSelect') ? document.getElementById('orderSelect').value : 'row';
             currentOrder = order;
 
+            // Update grid visuals for the new count/order
+            const colsInput = document.getElementById('colsInput');
+            const colsVal = colsInput ? parseInt(colsInput.value) || 0 : 0;
+            currentCols = colsVal;
+            updateGridVisuals(newCount, currentCols);
+
             const currentCount = balls.length;
 
             if (newCount > currentCount) {
                 // Add new balls
-                const positions = getGridLayout(newCount, order);
+                const positions = getGridLayout(newCount, order, currentCols);
                 for (let i = currentCount; i < newCount; i++) {
                     const ball = createBall(positions[i], i);
                     balls.push(ball);
@@ -419,7 +535,7 @@
                 });
             } else {
                 // Reposition existing balls
-                const newPositions = getGridLayout(newCount, order);
+                const newPositions = getGridLayout(newCount, order, currentCols);
                 balls.forEach((ball, idx) => {
                     const targetPos = newPositions[idx];
                     animateBallPosition(ball, targetPos);
@@ -459,8 +575,10 @@
         // Rotation animation
         function animate() {
             requestAnimationFrame(animate);
-            
-            gridGroup.rotation.z += 0.0005;
+            // rotate only if enabled
+            if (currentAutoRotate) {
+                gridGroup.rotation.z += 0.0005;
+            }
 
             renderer.render(scene, camera);
         }
@@ -474,14 +592,37 @@
             if (e.key === 'Enter') updateNumbers();
         });
 
-        // Reposition when grouping order changes
+        // Reposition when grouping order or columns change; wire auto-rotate toggle and wheel zoom
         const orderSelect = document.getElementById('orderSelect');
         if (orderSelect) {
             orderSelect.addEventListener('change', () => {
-                // Recalculate positions for current count using new order
                 updateNumbers();
             });
         }
+
+        const colsInput = document.getElementById('colsInput');
+        if (colsInput) {
+            colsInput.addEventListener('change', () => {
+                updateNumbers();
+            });
+        }
+
+        const autoRotateCheckbox = document.getElementById('autoRotate');
+        if (autoRotateCheckbox) {
+            autoRotateCheckbox.addEventListener('change', (e) => {
+                currentAutoRotate = !!e.target.checked;
+            });
+        }
+
+        // Mouse wheel zoom (adjust camera z)
+        window.addEventListener('wheel', (ev) => {
+            // Prevent page scroll when interacting with canvas
+            ev.preventDefault();
+            const delta = ev.deltaY;
+            camera.position.z += delta * 0.02; // adjust sensitivity
+            camera.position.z = Math.max(8, Math.min(200, camera.position.z));
+            camera.updateProjectionMatrix();
+        }, { passive: false });
     </script>
 </body>
 </html>
