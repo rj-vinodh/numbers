@@ -638,6 +638,26 @@
             if (e.key === 'Enter') updateNumbers();
         });
 
+        // Allow mouse wheel to change the Count input when hovering over it
+        const numberInputEl = document.getElementById('numberInput');
+        if (numberInputEl) {
+            numberInputEl.addEventListener('wheel', (e) => {
+                // only handle when pointer is over the input
+                e.preventDefault();
+                const step = e.shiftKey ? 10 : 1; // hold Shift to change faster
+                const dir = e.deltaY < 0 ? 1 : -1; // wheel up -> increase
+                const min = parseInt(numberInputEl.getAttribute('min')) || 1;
+                const max = parseInt(numberInputEl.getAttribute('max')) || 1000;
+                let val = parseInt(numberInputEl.value) || 0;
+                val = val + dir * step;
+                val = Math.max(min, Math.min(max, val));
+                if (val !== parseInt(numberInputEl.value)) {
+                    numberInputEl.value = val;
+                    updateNumbers();
+                }
+            }, { passive: false });
+        }
+
         // Reposition when grouping order or columns change; wire auto-rotate toggle and wheel zoom
         const orderSelect = document.getElementById('orderSelect');
         if (orderSelect) {
