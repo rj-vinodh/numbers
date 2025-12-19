@@ -144,6 +144,16 @@
         </div>
 
         <div class="control-group">
+            <label for="gridFontSize">Grid font size:</label>
+            <input type="number" id="gridFontSize" value="200" min="8" max="256">
+        </div>
+
+        <div class="control-group">
+            <label for="ballFontSize">Ball font size:</label>
+            <input type="number" id="ballFontSize" value="180" min="8" max="1024">
+        </div>
+
+        <div class="control-group">
             <label for="autoRotate">Auto-rotate:</label>
             <input type="checkbox" id="autoRotate" title="Toggle auto rotation of the grid">
         </div>
@@ -210,6 +220,9 @@
     let currentCols = 0;
     // Auto-rotate flag
     let currentAutoRotate = false;
+    // Font sizes
+    let currentGridFontSize = 64; // used for grid labels
+    let currentBallFontSize = 280; // used for numbers painted on balls
 
         // Returns an ordered list of positions for `count` items according to `order`.
         // Optional `cols` argument overrides the number of columns (0 = auto).
@@ -308,7 +321,7 @@
             
             // Draw the number with better antialiasing
             ctx.fillStyle = '#000000';
-            ctx.font = 'bold 280px Arial';
+            ctx.font = `bold ${currentBallFontSize}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(index + 1, 256, 256);
@@ -380,7 +393,7 @@
             // Labels for columns (top)
             for (let c = 0; c < gridCols; c++) {
                 const x = c * spacing - width / 2;
-                const label = createTextLabel((c + 1).toString(), 64, '#374151');
+                    const label = createTextLabel((c + 1).toString(), currentGridFontSize, '#374151');
                 label.position.set(x, height / 2 + spacing * 0.6, 0.1);
                 gridLinesGroup.add(label);
             }
@@ -388,7 +401,7 @@
             // Labels for rows (left)
             for (let r = 0; r < gridRows; r++) {
                 const y = r * spacing - height / 2;
-                const label = createTextLabel((r + 1).toString(), 64, '#374151');
+                const label = createTextLabel((r + 1).toString(), currentGridFontSize, '#374151');
                 // rotate so text faces the camera similarly; using PlaneGeometry so no rotation needed
                 label.position.set(-width / 2 - spacing * 0.6, y, 0.1);
                 gridLinesGroup.add(label);
@@ -438,6 +451,39 @@
             ball.scale.set(0, 0, 0);
             animateBallIn(ball, 0.2 + idx * 0.01);
             });
+        }
+
+        // Update label texture on a single ball to match currentBallFontSize
+        function updateBallLabel(ball, newFontSize) {
+            // ball.children[0] is the label mesh added in createBall
+            const labelMesh = ball.children.find(c => c.material && c.material.map);
+            if (!labelMesh) return;
+            // dispose old texture
+            const oldMap = labelMesh.material.map;
+            if (oldMap) oldMap.dispose();
+
+            const size = 512;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, size, size);
+            ctx.fillStyle = '#000000';
+            ctx.font = `bold ${newFontSize}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(ball.userData.number, size / 2, size / 2);
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            labelMesh.material.map = tex;
+            labelMesh.material.needsUpdate = true;
+        }
+
+        // Update labels for all existing balls
+        function updateAllBallLabels(newFontSize) {
+            balls.forEach(b => updateBallLabel(b, newFontSize));
         }
 
         function animateBallIn(ball, delay) {
@@ -604,6 +650,26 @@
         if (colsInput) {
             colsInput.addEventListener('change', () => {
                 updateNumbers();
+            });
+        }
+
+        const gridFontInput = document.getElementById('gridFontSize');
+        if (gridFontInput) {
+            gridFontInput.addEventListener('change', (e) => {
+                const v = parseInt(e.target.value) || 64;
+                currentGridFontSize = v;
+                // refresh grid visuals only
+                updateGridVisuals(balls.length, currentCols);
+            });
+        }
+
+        const ballFontInput = document.getElementById('ballFontSize');
+        if (ballFontInput) {
+            ballFontInput.addEventListener('change', (e) => {
+                const v = parseInt(e.target.value) || 280;
+                currentBallFontSize = v;
+                // update existing balls' labels
+                updateAllBallLabels(currentBallFontSize);
             });
         }
 
