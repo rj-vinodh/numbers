@@ -7,12 +7,12 @@
     <style>
         :root {
             --color-primary: #3182ce;
-            --color-primary-hover: #2c5aa0;
-            --color-success: #22c55e;
-            --color-text: #1f2937;
-            --color-bg: #f9fafb;
-            --color-surface: #ffffff;
-            --color-border: #e5e7eb;
+                --color-primary-hover: #2c5aa0;
+                --color-success: #22c55e;
+                --color-text: #f3f4f6; /* light text on dark bg */
+                --color-bg: #000000; /* page background black */
+                --color-surface: #0b0b0b; /* dark surface for controls */
+                --color-border: #1f2937;
         }
 
         * {
@@ -39,7 +39,8 @@
         #sketchContainer {
             display: block;
             width: 100%;
-            height: calc(100% - 120px);
+            /* reduce controls reserved height so canvas is larger */
+            height: calc(100% - 80px);
         }
 
         .controls {
@@ -106,7 +107,7 @@
 
         .info {
             margin-left: auto;
-            color: #6b7280;
+            color: var(--color-text);
             font-size: 14px;
         }
 
@@ -177,8 +178,17 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.5.0/p5.min.js"></script>
     <script>
         // ----- p5.js 2D implementation replacing Three.js -----
-        const spacing = 70; // pixel spacing between items
-        const ballRadius = 28; // visual radius in pixels for discs
+        // base spacing used when canvas size isn't available yet; will be adjusted
+        let spacing = 70; // pixel spacing between items (will be recomputed per-layout)
+        const baseBallRadius = 28; // maximum visual radius in pixels for discs
+
+        function computeBallRadius() {
+            // scale ball radius based on spacing so many balls fit comfortably
+            // prefer up to baseBallRadius, but shrink when spacing is tight
+            const r = Math.floor(spacing * 0.35);
+            return Math.max(4, Math.min(baseBallRadius, r));
+        }
+    const LARGE_COUNT_THRESHOLD = 1200; // threshold to switch to simplified draw path
         const colors = [
             '#ff6b6b', '#4ecdc4', '#ffe66d', '#95e1d3', '#f38181', '#aa96da', '#fcbad3', '#a8edea', '#fed766', '#ff006e'
         ];
@@ -190,8 +200,11 @@
         let currentAutoRotate = false; // not used in 2D but kept for compatibility
         let currentGridFontSize = 24; // px
         let currentBallFontSize = 18; // px
-        let currentShowGrid = false; // fast mode default
-        let currentShowNumbers = false; // fast mode default
+    let currentShowGrid = false; // fast mode default
+    let currentShowNumbers = false; // fast mode default
+    let largeMode = false;
+    let gridLayer = null;
+    let gridDirty = true;
 
         // Grid layout state for drawing
         let gridCols = 0, gridRows = 0, gridWidth = 0, gridHeight = 0;
@@ -204,6 +217,16 @@
             const gridC = cols > 0 ? cols : Math.ceil(Math.sqrt(count));
             const gridR = Math.ceil(count / gridC);
             gridCols = gridC; gridRows = gridR;
+
+            // compute spacing to fit the grid comfortably inside the canvas
+            // leave a margin of ~100px on each side
+            const availW = (sketchWidth && sketchWidth > 0) ? sketchWidth - 200 : spacing * gridC;
+            const availH = (sketchHeight && sketchHeight > 0) ? sketchHeight - 200 : spacing * gridR;
+            let spacingX = (gridC > 1) ? Math.floor(availW / (gridC - 1)) : spacing;
+            let spacingY = (gridR > 1) ? Math.floor(availH / (gridR - 1)) : spacing;
+            // choose the smaller to keep items within both dimensions
+            spacing = Math.max(10, Math.min(spacingX, spacingY));
+
             gridWidth = (gridC - 1) * spacing;
             gridHeight = (gridR - 1) * spacing;
 
@@ -266,6 +289,8 @@
                 };
                 balls.push(b);
             });
+            largeMode = balls.length > LARGE_COUNT_THRESHOLD;
+            gridDirty = true;
         }
 
         function updateNumbers() {
@@ -298,10 +323,12 @@
                 const newPositions = getGridLayout(newCount, order, currentCols);
                 balls.forEach((b, idx) => { if (newPositions[idx]) { b.x = newPositions[idx].x; b.y = newPositions[idx].y; } });
             }
+            largeMode = (newCount > LARGE_COUNT_THRESHOLD);
+            gridDirty = true;
         }
 
         // p5 sketch
-        let sketchCanvas;
+    let sketchCanvas;
         const sketch = (p) => {
             p.setup = () => {
                 const container = document.getElementById('sketchContainer');
@@ -312,7 +339,11 @@
                 p.pixelDensity(window.devicePixelRatio || 1);
                 p.textAlign(p.CENTER, p.CENTER);
                 p.ellipseMode(p.CENTER);
+                // create an offscreen layer for the grid (cached)
+                gridLayer = p.createGraphics(sketchWidth, sketchHeight);
+                gridLayer.pixelDensity(1);
                 initializeBalls(parseInt(document.getElementById('numberInput').value || 20));
+                gridDirty = true;
             };
 
             p.windowResized = () => {
@@ -320,66 +351,87 @@
                 sketchWidth = container.clientWidth;
                 sketchHeight = container.clientHeight;
                 p.resizeCanvas(sketchWidth, sketchHeight);
+                // recreate grid layer at new size
+                gridLayer = p.createGraphics(sketchWidth, sketchHeight);
+                gridLayer.pixelDensity(1);
+                gridDirty = true;
             };
 
             p.draw = () => {
-                p.background(249,250,251);
-                p.push();
-                // translate to center and scale for zoom
-                p.translate(sketchWidth/2, sketchHeight/2);
-                p.scale(globalScale);
+                p.background(0);
 
-                // draw grid if enabled
-                if (currentShowGrid) {
-                    p.stroke('#d1d5db');
-                    p.strokeWeight(1);
-                    // vertical lines
-                    for (let c = 0; c < gridCols; c++) {
-                        const x = c * spacing - gridWidth/2;
-                        p.line(x, -gridHeight/2, x, gridHeight/2);
+                // redraw grid layer only when needed
+                if (!gridLayer) gridLayer = p.createGraphics(sketchWidth, sketchHeight);
+                if (gridDirty) {
+                    // clear and draw grid into gridLayer
+                    gridLayer.clear();
+                    if (currentShowGrid) {
+                        gridLayer.push();
+                        gridLayer.translate(gridLayer.width/2, gridLayer.height/2);
+                        gridLayer.stroke('#d1d5db');
+                        gridLayer.strokeWeight(1);
+                        for (let c = 0; c < gridCols; c++) {
+                            const x = c * spacing - gridWidth/2;
+                            gridLayer.line(x, -gridHeight/2, x, gridHeight/2);
+                        }
+                        for (let r = 0; r < gridRows; r++) {
+                            const y = r * spacing - gridHeight/2;
+                            gridLayer.line(-gridWidth/2, y, gridWidth/2, y);
+                        }
+                        gridLayer.noStroke();
+                        gridLayer.fill('#e5e7eb');
+                        gridLayer.textAlign(p.CENTER, p.CENTER);
+                        gridLayer.textSize(currentGridFontSize);
+                        for (let c = 0; c < gridCols; c++) {
+                            const x = c * spacing - gridWidth/2;
+                            gridLayer.text((c+1).toString(), x, -gridHeight/2 - spacing*0.6);
+                        }
+                        for (let r = 0; r < gridRows; r++) {
+                            const y = r * spacing - gridHeight/2;
+                            gridLayer.text((r+1).toString(), -gridWidth/2 - spacing*0.6, y);
+                        }
+                        gridLayer.pop();
                     }
-                    // horizontal lines
-                    for (let r = 0; r < gridRows; r++) {
-                        const y = r * spacing - gridHeight/2;
-                        p.line(-gridWidth/2, y, gridWidth/2, y);
-                    }
-
-                    // labels
-                    p.fill('#374151');
-                    p.noStroke();
-                    p.textSize(currentGridFontSize);
-                    // columns
-                    for (let c = 0; c < gridCols; c++) {
-                        const x = c * spacing - gridWidth/2;
-                        p.text((c+1).toString(), x, -gridHeight/2 - spacing*0.6);
-                    }
-                    // rows
-                    for (let r = 0; r < gridRows; r++) {
-                        const y = r * spacing - gridHeight/2;
-                        p.text((r+1).toString(), -gridWidth/2 - spacing*0.6, y);
-                    }
+                    gridDirty = false;
                 }
 
-                // draw balls
-                balls.forEach((b, idx) => {
-                    // ease position
-                    b.drawX += (b.x - b.drawX) * 0.15;
-                    b.drawY += (b.y - b.drawY) * 0.15;
-                    // scale animation
-                    b.scale += (b.targetScale - b.scale) * 0.18;
+                // draw cached grid layer with translation + scale
+                p.push();
+                p.translate(sketchWidth/2, sketchHeight/2);
+                p.scale(globalScale);
+                p.imageMode(p.CORNER);
+                p.image(gridLayer, -sketchWidth/2, -sketchHeight/2, sketchWidth, sketchHeight);
 
-                    p.push();
-                    p.translate(b.drawX, b.drawY);
+                // fast path for large counts: simple immediate drawing, no easing, no numbers
+                const radius = computeBallRadius();
+
+                if (largeMode) {
                     p.noStroke();
-                    p.fill(b.color);
-                    p.ellipse(0, 0, ballRadius*2*b.scale, ballRadius*2*b.scale);
-                    if (currentShowNumbers) {
-                        p.fill(0);
-                        p.textSize(currentBallFontSize);
-                        p.text(b.number.toString(), 0, 0);
+                    for (let i = 0, L = balls.length; i < L; i++) {
+                        const b = balls[i];
+                        p.fill(b.color);
+                        p.ellipse(b.x, b.y, radius * 2, radius * 2);
                     }
-                    p.pop();
-                });
+                } else {
+                    // normal path with easing/scale and optional numbers
+                    balls.forEach((b, idx) => {
+                        b.drawX += (b.x - b.drawX) * 0.15;
+                        b.drawY += (b.y - b.drawY) * 0.15;
+                        b.scale += (b.targetScale - b.scale) * 0.18;
+
+                        p.push();
+                        p.translate(b.drawX, b.drawY);
+                        p.noStroke();
+                        p.fill(b.color);
+                        p.ellipse(0, 0, (radius * 2) * b.scale, (radius * 2) * b.scale);
+                        if (currentShowNumbers) {
+                            p.fill(255);
+                            p.textSize(currentBallFontSize);
+                            p.text(b.number.toString(), 0, 0);
+                        }
+                        p.pop();
+                    });
+                }
 
                 p.pop();
             };
